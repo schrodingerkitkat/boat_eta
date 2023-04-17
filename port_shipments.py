@@ -49,13 +49,6 @@ def fetch_marine_traffic_data(df_csv):
 
 # Function to preprocess and save data
 def preprocess_and_save_data(df_joined):
-    # Save the data to SQL server
-    db_write = ""
-    user = ""
-    write_table = ""
-    pasc = os.environ['SERVER_KEY']
-    server = ""
-
     df_joined.write.mode("overwrite") \
         .format("jdbc") \
         .option("url", f"jdbc:sqlserver://" + server + ":1433;databaseName=" + db_write + ";encrypt=true;trustServerCertificate=true;") \
@@ -67,12 +60,6 @@ def preprocess_and_save_data(df_joined):
 
 # Function to get data from SQL server
 def get_data_from_sql():
-    db_read = ""
-    user = ""
-    read_table = "dbo.BilletEtaToPort"
-    pasc = os.environ['SERVER_KEY']
-    server = ""
-
     df = spark.read \
         .format("jdbc") \
         .option("url", f"jdbc:sqlserver://" + server + ":1433;databaseName=" + db_read + ";encrypt=true;trustServerCertificate=true;") \
