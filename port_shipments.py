@@ -28,43 +28,33 @@ server = os.environ['server']
 db_read = os.environ['eta_to_port_db_read_']
 read_table = os.environ['eta_to_port_db_read_table']
 
-
+# UDF for processing API response
+@udf(returnType=StringType())
+def process_api_response(mmsi):
+    response = requests.get(
+        API_URL + API_KEY + "?v=1&portid=2727&mmsi=" + str(mmsi) + "&msgtype=simple&protocol=json"
+    )
+    return response.text
 
 # Function to fetch MarineTraffic data
-def fetch_marine_traffic_data(mmsi_list):
-    df2 = pd.DataFrame([])
+def fetch_marine_traffic_data(df_csv):
+    # Apply UDF to fetch API data
+    df_with_api_data = df_csv.withColumn("api_data", process_api_response(col("MMSI")))
 
-    for mmsi in mmsi_list:
-        # Make the request to the MarineTraffic API
-        response = requests.get(
-            API_URL + API_KEY + "?v=1&portid="+portid+"&mmsi=" + str(mmsi) + "&msgtype=simple&protocol=json"
-        )
-        dfp = response.json()
-        df2 = df2.append(dfp, ignore_index=True)
+    # Convert JSON data to DataFrame and join with the original DataFrame
+    df_api_data = spark.read.json(df_with_api_data.select("api_data").rdd.map(lambda r: r.api_data))
+    df_joined = df_csv.join(df_api_data, df_csv["MMSI"] == df_api_data["1"])
 
-    return df2
+    return df_joined
 
 # Function to preprocess and save data
-def preprocess_and_save_data(df2):
-    # Rename columns and create a PySpark DataFrame
-    df = spark.createDataFrame(df2) \
-        .withColumnRenamed("0", "SHIP_ID") \
-        .withColumnRenamed("1", "MMSI") \
-        .withColumnRenamed("2", "IMO") \
-        .withColumnRenamed("3", "LAST_PORT_ID") \
-        .withColumnRenamed("4", "LAST_PORT") \
-        .withColumnRenamed("5", "LAST_PORT_UNLOCODE") \
-        .withColumnRenamed("6", "LAST_PORT_TIME") \
-        .withColumnRenamed("7", "NEXT_PORT_NAME") \
-        .withColumnRenamed("8", "NEXT_PORT_UNLOCODE") \
-        .withColumnRenamed("9", "ETA_CALC")
-
-    # Read data from CSV file
-    df_csv = spark.read.csv("/mnt/c/swapp/boat_api.csv", header=True)
-    df_csv = df_csv.dropna(subset=["MMSI"])
-
-    # Join the two DataFrames on the MMSI column
-    df_joined = df.select(["MMSI", "LAST_PORT", "LAST_PORT_TIME", "ETA_CALC"]).join(df_csv, on="MMSI")
+def preprocess_and_save_data(df_joined):
+    # Save the data to SQL server
+    db_write = ""
+    user = ""
+    write_table = ""
+    pasc = os.environ['SERVER_KEY']
+    server = ""
 
     df_joined.write.mode("overwrite") \
         .format("jdbc") \
@@ -91,12 +81,12 @@ def get_data_from_sql():
         .option("password", pasc) \
         .option("driver", "com.microsoft.sqlserver.jdbc.SQLServerDriver") \
         .load()
-
     return df.toPandas()
 
 app = Flask(__name__)
 
 @app.route('/map')
+
 def map():
     # Fetch the data from the SQL server
     df = get_data_from_sql()
@@ -118,17 +108,14 @@ def map():
 
 if __name__ == '__main__':
     # Read MMSI numbers from CSV file
-    df_csv = spark.read.csv("shipments.csv", header=True)
+    df_csv = spark.read.csv("/shipments.csv", header=True)
     df_csv = df_csv.dropna(subset=["MMSI"])
-    mmsi_rows = df_csv.select(["MMSI"]).collect()
-    mmsi_list = [row["MMSI"] for row in mmsi_rows]
 
     # Fetch MarineTraffic data
-    marine_traffic_data = fetch_marine_traffic_data(mmsi_list)
+    marine_traffic_data = fetch_marine_traffic_data(df_csv)
 
     # Preprocess and save data
     preprocess_and_save_data(marine_traffic_data)
 
     # Start Flask app
     app.run(debug=True)
-
